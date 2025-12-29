@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Low‑latency Capture Preview</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+      }
+
+      body {
+        background: #111;
+        color: #eee;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden; /* no scrollbars */
+      }
+
+      #controls {
+        padding: 8px;
+        background: #222;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border-bottom: 1px solid #333;
+        flex: 0 0 auto;
+      }
+
+      button {
+        background: #3a7afe;
+        border: none;
+        color: white;
+        padding: 6px 10px;
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: 14px;
+      }
+
+      button:disabled {
+        background: #555;
+        cursor: default;
+      }
+
+      label {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 13px;
+        white-space: nowrap;
+      }
+
+      #volumeSlider {
+        width: 120px;
+      }
+
+      #status {
+        font-size: 12px;
+        color: #aaa;
+        margin-left: auto;
+        max-width: 40%;
+        text-align: right;
+      }
+
+      video {
+        flex: 1 1 auto;
+        width: 100%;
+        height: 100%;
+        background: black;
+        object-fit: contain; /* keep aspect ratio, black bars if needed */
+      }
+    </style>
+  </head>
+  <body>
+    <div id="controls">
+      <button id="startBtn">Start preview</button>
+
+      <label>
+        <input id="muteCheckbox" type="checkbox" checked />
+        Mute
+      </label>
+
+      <label>
+        Vol
+        <input
+          id="volumeSlider"
+          type="range"
+          min="0"
+          max="100"
+          value="100"
+        />
+      </label>
+
+      <button id="toggleBarBtn">Hide bar (H)</button>
+      <div id="status"></div>
+    </div>
+
+    <video id="preview" autoplay playsinline></video>
+
+    <script>
+      const startBtn = document.getElementById("startBtn");
+      const muteCheckbox = document.getElementById("muteCheckbox");
+      const volumeSlider = document.getElementById("volumeSlider");
+      const toggleBarBtn = document.getElementById("toggleBarBtn");
+      const controlsBar = document.getElementById("controls");
+      const preview = document.getElementById("preview");
+      const status = document.getElementById("status");
+
+      let currentStream = null;
+      let controlsVisible = true;
+
+      // Set initial volume
+      preview.volume = volumeSlider.value / 100;
+
+      function logStatus(msg) {
+        console.log("[status]", msg);
+        status.textContent = msg;
+      }
+
+      async function startPreview() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          logStatus("This browser does not support getUserMedia.");
+          alert(
+            "Your browser does not support getUserMedia.\nUse a modern Chrome / Edge / Firefox."
+          );
+          return;
+        }
+
+        // Stop any previous stream
+        if (currentStream) {
+          currentStream.getTracks().forEach((t) => t.stop());
+          currentStream = null;
+        }
+
+        const constraints = {
+          video: {
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 60 }
+          },
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+            channelCount: 2,
+            sampleRate: 48000
+          }
+        };
+
+        console.log("Requesting stream with constraints:", constraints);
+        logStatus("Requesting camera+audio (no processing)...");
+
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia(constraints);
+          currentStream = stream;
+
+          const vTracks = stream.getVideoTracks();
+          const aTracks = stream.getAudioTracks();
+          console.log("Video tracks:", vTracks);
+          console.log("Audio tracks:", aTracks);
+
+          let msg = "";
+          if (vTracks.length) {
+            msg += "Video: " + (vTracks[0].label || "unknown");
+          } else {
+            msg += "No video track";
+          }
+
+          if (aTracks.length) {
+            msg += " | Audio: " + (aTracks[0].label || "unknown");
+          } else {
+            msg += " | No audio track";
+          }
+          logStatus(msg);
+
+          preview.srcObject = stream;
+          preview.muted = muteCheckbox.checked;
+          preview.volume = volumeSlider.value / 100;
+
+          preview.addEventListener("loadedmetadata", () => {
+            console.log(
+              "Video loadedmetadata:",
+              preview.videoWidth,
+              preview.videoHeight
+            );
+          });
+
+          preview.addEventListener("canplay", () => {
+            console.log("Video canplay event fired.");
+          });
+
+          try {
+            await preview.play();
+            console.log("preview.play() succeeded");
+          } catch (err) {
+            console.error("preview.play() failed:", err);
+            logStatus("Video element could not play: " + err.message);
+          }
+        } catch (err) {
+          console.error("getUserMedia error:", err);
+          logStatus("getUserMedia failed: " + (err.message || err));
+          alert("getUserMedia failed:\n" + (err.message || err));
+        }
+      }
+
+      function setControlsVisible(visible) {
+        controlsVisible = visible;
+        controlsBar.style.display = visible ? "flex" : "none";
+        toggleBarBtn.textContent = visible ? "Hide bar (H)" : "Show bar (H)";
+      }
+
+      function toggleControls() {
+        setControlsVisible(!controlsVisible);
+      }
+
+      startBtn.addEventListener("click", startPreview);
+
+      muteCheckbox.addEventListener("change", () => {
+        preview.muted = muteCheckbox.checked;
+      });
+
+      volumeSlider.addEventListener("input", () => {
+        const vol = volumeSlider.value / 100;
+        preview.volume = vol;
+        console.log("Volume set to", vol);
+      });
+
+      toggleBarBtn.addEventListener("click", toggleControls);
+
+      // Keyboard shortcut: H to toggle the bar
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "h" || e.key === "H") {
+          toggleControls();
+        }
+      });
+
+      // Optional: start automatically on load
+      window.addEventListener("load", () => {
+        // startPreview();
+      });
+    </script>
+  </body>
+</html>
